@@ -10,13 +10,6 @@ import org.apache.spark.sql.cassandra.DataFrameReaderWrapper
 
 object loadmongo extends App {
 
-  // Mongo Atlas database connection URL
-  /*val mongoURI =
-    "mongodb://myMongoUser:yabin123@cluster0-shard-00-00.mysjt.mongodb.net:27017,cluster0-shard-00-01.mysjt.mongodb.net:27017,cluster0-shard-00-02.mysjt.mongodb.net:27017/" +
-    "?ssl=true&replicaSet=atlas-xhfhp5-shard-0&authSource=admin&retryWrites=true&w=majority"
-  val mongoDBName = "sample_training"
-  val mongoCollName = "grades"*/
-
   // On-prem Mongo server (replica set) connection URL
   val mongoURI =
     "mongodb://10.101.35.51:27017,10.101.35.51:27018,10.101.35.51:27019/"
