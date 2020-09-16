@@ -12,7 +12,7 @@ object loadmongo extends App {
 
   // On-prem Mongo server (replica set) connection URL
   val mongoURI =
-    "mongodb://10.101.35.51:27017,10.101.35.51:27018,10.101.35.51:27019/"
+    "mongodb://<mongo_srv_ip>:27017,<mongo_srv_ip>:27018,<mongo_srv_ip>:27019/"
   val mongoDBName = "mytestdb"
   val mongoCollName = "resturants"
 
