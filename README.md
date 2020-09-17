@@ -80,7 +80,7 @@ $ dse spark --conf "spark.mongodb.input.uri=mongodb://<mongodb_primary_srv_ip>/?
 There are a few things to note here:
 * **spark.mongodb.input.uri** configuration specifies the connection URI for MongoDB
 * **spark.jar.packages** tells Spark driver and executors to include MongoDB Spark Connector library in their classpaths
-* **packages" option tells Spark shell to get and (if needed, to download) MongoDB Spark Connector library.
+* **packages** option tells Spark shell to get and (if needed, to download) MongoDB Spark Connector library.
 
 After getting into Spark Shell REPL, run the following commands to verify data read from MongoDB:
 ```
