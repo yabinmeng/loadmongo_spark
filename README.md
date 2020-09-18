@@ -100,4 +100,111 @@ scala> mongoDF.show(1)
 |[50b59cd75bed76f4...|      27|[[exam, 60.194736...|         0|
 +--------------------+--------+--------------------+----------+
 only showing top 1 row
-```    
+```
+
+# Implicitly Infer Schema for MongoDB Data Loading
+
+MongoDB is a schemaless database. This means that the documents in a collection may have different JSON structures (although they could also follow the same one). On the other side Spark DataFrames and DataSets do require a schema. 
+
+Therefore, when reading MongoDB data into Spark, the Spark Connector automatically infers the schema from some randomly chosen documents and assign the inferred schema to the DataFrame.
+
+In the above example, although the documents in "grades" collection share the same document structure, but since we don't explicitly specify the schema, an inferred schema is assigned to the DataFrame, as below:
+
+```
+scala> mongoDF.printSchema()
+root
+ |-- _id: struct (nullable = true)
+ |    |-- oid: string (nullable = true)
+ |-- class_id: integer (nullable = true)
+ |-- scores: array (nullable = true)
+ |    |-- element: struct (containsNull = true)
+ |    |    |-- type: string (nullable = true)
+ |    |    |-- score: double (nullable = true)
+ |-- student_id: integer (nullable = true)
+```
+
+By the above inferred schema, the "**scores**" column is of the following type:
+* ArraryType(StructType)
+
+## Challenges of Writing into C* using Spark Cassandra Connector
+
+Assuming in the target C* schema, we only want to keep columns "class_id", "student_id", and "scores", We can try to create a C* table from a DataFrame by utilizing Spark Cassandra Connector's features
+. But it fails with "IllegalArgumentException", as below:
+```
+scala> mongoDF0.drop($"_d").createCassandraTable(
+     |     "testks",
+     |     "grades",
+     |     partitionKeyColumns = Some(Seq("student_id")))
+java.lang.IllegalArgumentException: Unsupported type: StructType(StructField(oid,StringType,true))
+... ... 
+```
+
+The issue here is that Spark Cassandra Connector doesn't support Spark SQL **StructType**.
+ 
+# Explicitly Schema Specification for MongoDB Data Loading
+
+Looking at the original document structure, the natural column type for "scores" column would be a List/Arrary of Map items. Based on this understanding, let's explicitly specify the schema when loading the data from MongoDB. 
+
+```
+scala> import org.apache.spark.sql.types._
+import org.apache.spark.sql.types._
+
+scala> import org.apache.spark.sql.functions._
+import org.apache.spark.sql.functions._
+
+scala> val scoreMapType = DataTypes.createMapType(StringType, StringType)
+scoreMapType: org.apache.spark.sql.types.MapType = MapType(StringType,StringType,true)
+
+scala> val gradesSchema = ( new StructType()
+     |     .add("_id", StringType)
+     |     .add("class_id", IntegerType)
+     |     .add("student_id", IntegerType)
+     |     .add("scores", ArrayType(scoreMapType))
+     | )
+gradesSchema: org.apache.spark.sql.types.StructType = StructType(StructField(_id,StringType,true), StructField(class_id,IntegerType,true), StructField(student_id,IntegerType,true), StructField(scores,ArrayType(MapType(StringType,StringType,true),true),true))
+
+scala> val mongoDF = (
+     |     spark.read
+     |     .schema(gradesSchema)
+     |     .format("com.mongodb.spark.sql.DefaultSource")
+     |     .option("database", "mytestdb")
+     |     .option("collection", "grades")
+     |     .load()
+     | )
+mongoDF: org.apache.spark.sql.DataFrame = [_id: string, class_id: int ... 2 more fields]
+)
+
+scala> mongoDF.printSchema
+root
+ |-- _id: string (nullable = true)
+ |-- class_id: integer (nullable = true)
+ |-- student_id: integer (nullable = true)
+ |-- scores: array (nullable = true)
+ |    |-- element: map (containsNull = true)
+ |    |    |-- key: string
+ |    |    |-- value: string (valueContainsNull = true)
+```
+
+Check the DataFrame schema and we now see that the "**scores**" column is of the following type:
+* ArraryType(Map(String, String))
+
+## Challenges of Writing into C* using Spark Cassandra Connector
+
+**Map** type is supported in Spark Cassandra Connector, but writing the above DataFrame still triggers an issue, as below:
+
+```
+scala> val df = mongoDF.drop($"_id")
+df: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+scala> df.createCassandraTable(
+     |   "testks",
+     |   "grades",
+     |   partitionKeyColumns = Some(Seq("student_id")))
+com.datastax.driver.core.exceptions.InvalidConfigurationInQueryException: Invalid type list<map<text, text>> for column scores: non-frozen collections are only supported at top-level: subtype map<text, text> of list<map<text, text>> must be frozen
+... ...
+``` 
+
+This error looks like Spark Cassandra Connector's "createCassandraTable()" function tries to create a table with a column ("scores") of CQL type "***list<map<text, text>>***". This is invalid because in C* such a column type (collection within a collection) requires "frozne" keyword like "***list<frozen<map<text, text>>>***".
+
+# Write into C* with C* Native Schema 
+
