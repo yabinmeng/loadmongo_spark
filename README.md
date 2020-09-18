@@ -208,5 +208,71 @@ This error looks like Spark Cassandra Connector's "createCassandraTable()" funct
 
 This is invalid because in C* such a column type (collection within a collection) requires "frozne" keyword like "***list<frozen<map<text, text>>>***".
 
+One workaround here is to create proper C* schema in advance with the right CQL type (e.g. with "frozen" keyword) and the Spark program simply writes data in C* without the need to create the table first.
 
-<<< More to update ... >>>
+# Write to C* with a Flatten Schema
+
+In C*, there are several different techniques to do data denormalization. Using collection is one way; but there are some minor caveats associated with it. Another probably better approach is through "clustering" keys, as exampled in the following C* schema:
+
+```
+CREATE TABLE testks.grades (
+    class_id int,
+    student_id int,
+    score_type text,
+    score_value double,
+    PRIMARY KEY ((class_id, student_id), score_type)
+```
+
+Based on this understanding, we can do the following data transformation using Spark:
+
+```
+// Drop "_id" column 
+scala> var df = mongoDF.drop($"_id")
+df: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+// Flatten the array
+scala> df = df.select($"class_id", $"student_id", explode($"scores") as "score_types")
+df: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+// Get the individual items within the map
+scala> df = df.select($"class_id", $"student_id", $"score_types.type" as "score_type", $"score_types.score" as "score_value")
+df: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 2 more fields]
+
+// Convert the "score_value" to float type
+df = df.withColumn("score_value", col("score_value").cast("Float"))
+```
+
+At this point, the schema is flattened out and we can call Spark Cassandra Connector functions to create a table and insert data:
+
+```
+scala> df.createCassandraTable(
+     |     "testks",
+     |     "grades2",
+     |     partitionKeyColumns = Some(Seq("class_id","student_id")),
+     |     clusteringKeyColumns = Some(Seq("score_type")))
+
+scala> (df.write
+     | .cassandraFormat("grades2", "testks")
+     | .mode("append")
+     | save()
+     | )
+```
+
+Now log into CQLSH and verify the results:
+
+```
+cqlsh:testks> select * from grades2 limit 10;
+
+ class_id | student_id | score_type | score_value
+----------+------------+------------+-------------------
+       20 |         41 |       exam | 89.86568333880862
+       20 |         41 |   homework | 41.18037387528079
+       20 |         41 |       quiz | 86.67438818752774
+        7 |         29 |       exam | 63.15698088911974
+        7 |         29 |   homework | 9.362100057782852
+        7 |         29 |       quiz | 30.41484529536909
+       24 |          0 |       exam | 4.444435759027499
+       24 |          0 |   homework | 86.79352850434199
+       24 |          0 |       quiz | 28.63057857803885
+       16 |         29 |       exam | 91.10262572056217
+```
