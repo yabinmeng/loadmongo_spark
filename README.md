@@ -204,7 +204,9 @@ com.datastax.driver.core.exceptions.InvalidConfigurationInQueryException: Invali
 ... ...
 ``` 
 
-This error looks like Spark Cassandra Connector's "createCassandraTable()" function tries to create a table with a column ("scores") of CQL type "***list<map<text, text>>***". This is invalid because in C* such a column type (collection within a collection) requires "frozne" keyword like "***list<frozen<map<text, text>>>***".
+This error looks like Spark Cassandra Connector's "createCassandraTable()" function tries to create a table with a column ("scores") of CQL type "***list<map<text, text>>***". 
 
-# Write into C* with C* Native Schema 
+This is invalid because in C* such a column type (collection within a collection) requires "frozne" keyword like "***list<frozen<map<text, text>>>***".
 
+
+<<< More to update ... >>>
