@@ -141,7 +141,7 @@ java.lang.IllegalArgumentException: Unsupported type: StructType(StructField(oid
 
 The issue here is that Spark Cassandra Connector doesn't support Spark SQL **StructType**.
  
-# Explicitly Schema Specification for MongoDB Data Loading
+# Explicit Schema Specification for MongoDB Data Loading
 
 Looking at the original document structure, the natural column type for "scores" column would be a List/Arrary of Map items. Based on this understanding, let's explicitly specify the schema when loading the data from MongoDB. 
 
