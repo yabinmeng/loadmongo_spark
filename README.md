@@ -282,3 +282,172 @@ cqlsh:testks> select * from grades2 limit 10;
 ---
 
 ![#f03c15](https://via.placeholder.com/15/f03c15/000000?text=+) **NOTE**: In the above flattened C* schema, the primary key is the combination of "class_id", "student_id", and "score_type". This means that for each student within a class, there can only be one record per score type. If the original Mongo collection does have multiple score records under one record type for one student, the above C* schema and transformation will be problematic. 
+
+# Final Solution with Proper Data Transformation
+
+In the original MongoDB collection, the "**scores**" column is an **array** of maps with the following key/value part as an example:
+* *Map Item Key*: "type", or "score"
+* *Map Item Value*:  "exam", or 78.44172815491468
+ 
+In the target C* table, we want **scores** column to be a **list** of map items with the following format:
+* *Map Item Key*: 'exam'
+* *Map Value Key*: 78.44172815491468
+
+The corresponding C* table schema would be like below:
+```
+CREATE TABLE testks.grades (
+    class_id int,
+    student_id int,
+    score_map list<frozen<map<text, float>>>,
+    PRIMARY KEY ((class_id, student_id))
+)
+```
+
+In order to achieve this result, we need to do the following data transformation steps:
+```
+// Drop MongoDB "_id" pirmary key column
+// -- mongoDF is the source data from MongoDB (see early sections)
+scala> val df = mongoDF.drop($"_id")
+df: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+// Flatten "scores" column from one record having an array of maps to multiple records having one map
+scala> val df1 = df.select($"class_id", $"student_id", explode($"scores") as "scores")
+df1: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field] 
+
+scala> df1.printSchema()
+root
+ |-- class_id: integer (nullable = true)
+ |-- student_id: integer (nullable = true)
+ |-- scores: map (nullable = true)
+ |    |-- key: string
+ |    |-- value: string (valueContainsNull = true)
+
+scala> df1.show(5)
++--------+----------+--------------------+
+|class_id|student_id|              scores|
++--------+----------+--------------------+
+|      28|         0|[type -> exam, sc...|
+|      28|         0|[type -> quiz, sc...|
+|      28|         0|[type -> homework...|
+|      28|         0|[type -> homework...|
+|      28|         0|[type -> homework...|
++--------+----------+--------------------+
+
+// Only keep map value items (no key items) 
+val df2 = df1.select($"class_id", $"student_id", map_values($"scores") as "score_values")
+df2: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+scala> df2.printSchema()
+root
+ |-- class_id: integer (nullable = true)
+ |-- student_id: integer (nullable = true)
+ |-- score_values: array (nullable = true)
+ |    |-- element: string (containsNull = true)
+
+scala> df2.show(5)
++--------+----------+--------------------+
+|class_id|student_id|        score_values|
++--------+----------+--------------------+
+|      28|         0|[exam, 39.1774940...|
+|      28|         0|[quiz, 78.4417281...|
+|      28|         0|[homework, 20.817...|
+|      28|         0|[homework, 70.445...|
+|      28|         0|[homework, 50.666...|
++--------+----------+--------------------+
+
+// Convert to the desired map format
+val df3 = df2.select($"class_id", $"student_id", $"score_values"(0) as "score_type", $"score_values"(1) as "score_value").withColumn("score_map", map(col("score_type"), col("score_value"))).drop("score_type", "score_value")
+
+scala> df3.printSchema()
+root
+ |-- class_id: integer (nullable = true)
+ |-- student_id: integer (nullable = true)
+ |-- score_map: map (nullable = false)
+ |    |-- key: string
+ |    |-- value: string (valueContainsNull = true)
+
+scala> df3.show(5)
++--------+----------+--------------------+
+|class_id|student_id|           score_map|
++--------+----------+--------------------+
+|      28|         0|[exam -> 39.17749...|
+|      28|         0|[quiz -> 78.44172...|
+|      28|         0|[homework -> 20.8...|
+|      28|         0|[homework -> 70.4...|
+|      28|         0|[homework -> 50.6...|
++--------+----------+--------------------+
+
+// Consolidate multiple map itemss (from multiple rows) into a list of maps (under one row) 
+scala> val df4 = df3.groupBy("class_id", "student_id").agg(collect_list("score_map") as "score_map")
+df4: org.apache.spark.sql.DataFrame = [class_id: int, student_id: int ... 1 more field]
+
+scala> df4.printSchema()
+root
+ |-- class_id: integer (nullable = true)
+ |-- student_id: integer (nullable = true)
+ |-- score_map: array (nullable = true)
+ |    |-- element: map (containsNull = true)
+ |    |    |-- key: string
+ |    |    |-- value: string (valueContainsNull = true)
+
+scala> df4.show(5)
++--------+----------+--------------------+
+|class_id|student_id|           score_map|
++--------+----------+--------------------+
+|       3|        30|[[exam -> 62.5280...|
+|       0|        25|[[exam -> 60.2918...|
+|      11|        23|[[exam -> 92.6824...|
+|      16|         3|[[exam -> 0.59987...|
+|      30|         0|[[exam -> 14.3434...|
++--------+----------+--------------------+
+```
+
+At this point, we're ready to write the transformed data into C*, following the target schema
+
+```
+// Write data into C*
+scala> (df4.write
+     | .cassandraFormat("grades", "testks")
+     | .mode("append")
+     | save()
+     | )
+``` 
+
+Now let's verify the result, using one document ("student_id": 29, "class_id": 7) from MongoDB as an example.
+
+* Check the source document content from MongoDB
+```
+rs0:PRIMARY> db.grades.find( {student_id:{$eq:29}, class_id:{$eq:7}} ).pretty()
+{
+	"_id" : ObjectId("50b59cd75bed76f46522c3f1"),
+	"student_id" : 29,
+	"class_id" : 7,
+	"scores" : [
+		{
+			"type" : "exam",
+			"score" : 63.15698088911974
+		},
+		{
+			"type" : "quiz",
+			"score" : 30.41484529536909
+		},
+		{
+			"type" : "homework",
+			"score" : 9.362100057782852
+		},
+		{
+			"type" : "homework",
+			"score" : 4.489357836698893
+		}
+	]
+}
+```
+
+* Verify the target data content inserted in C*
+```
+cqlsh:testks> select * from grades where class_id = 7 and student_id = 29;
+
+ class_id | student_id | score_map
+----------+------------+---------------------------------------------------------------------------------------
+        7 |         29 | [{'exam': 63.15698}, {'quiz': 30.41484}, {'homework': 9.3621}, {'homework': 4.48936}]
+```
