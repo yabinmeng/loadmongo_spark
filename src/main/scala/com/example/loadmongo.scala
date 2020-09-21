@@ -7,28 +7,97 @@ import com.mongodb.spark._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.cassandra._
 import com.datastax.spark.connector._
+import com.datastax.spark.connector.cql.CassandraConnector
+
+import com.datastax.oss.driver.api.core.CqlSession
 
 object loadmongo extends App {
 
+  val mongoDBName = "mytestdb"
+  val mongoCollName = "grades"
+
+  val cassKSName = "testks"
+  // C* table name for simple-flatten writes
+  val cassTblName_sf = "grades_cf"
+  // C* table name for list-of-map writes
+  val cassTblName_lm = "grades_lm"
+
   /**
-   * Test direct client connection to MongoDB (not through Spark)
+   * Load MongoDB data; flatten the document array; and write to C*
    */
-  /*  def TestRegMongoClient(): Unit = {
-      val mongoLogger = Logger.getLogger("org.mongodb.driver")
-      mongoLogger.setLevel(Level.WARNING)
+  def SimpleFlattenWriteCass(mongoDF: DataFrame): Unit = {
 
-      val client: MongoClient = MongoClients.create(mongoURI)
-      val db: MongoDatabase = client.getDatabase(mongoDBName)
-      val collNames = db.listCollectionNames().iterator()
+    val df = mongoDF
+      .select(
+        col("class_id"),
+        col("student_id"),
+        explode(col("scores")) as "score_types"
+      )
+      .select(
+        col("class_id"),
+        col("student_id"),
+        col("score_types.type") as "score_type",
+        col("score_types.score") as "score_value"
+      )
+      .withColumn("score_value", col("score_value").cast("Float"))
 
-      while (collNames.hasNext) {
-        System.out.println(collNames.next())
-      }
-    }*/
-  //TestRegMongoClient()
+    df.printSchema()
+
+    // Create C* table
+    df.createCassandraTable(
+      cassKSName,
+      cassTblName_sf,
+      partitionKeyColumns = Some(Seq("class_id", "student_id")),
+      clusteringKeyColumns = Some(Seq("score_type")))
+
+    // Write to C* table
+    df.write
+      .cassandraFormat(cassTblName_sf, cassKSName)
+      .mode("append")
+      .save()
+  }
+
+  /**
+   * Load MongoDB data; flatten the document array; and write to C*
+   */
+  def ListOfMapWriteCass(mongoDF : DataFrame): Unit = {
+
+    val df = mongoDF
+      .select(
+        col("class_id"),
+        col("student_id"),
+        explode(col("scores")) as "scores"
+      )
+      .select(
+        col("class_id"),
+        col("student_id"),
+        map_values(col("scores")) as "score_values"
+      )
+      .select(
+        col("class_id"),
+        col("student_id"),
+        col("score_values")(0) as "score_type",
+        col("score_values")(1) as "score_value"
+      )
+      .withColumn(
+        "score_map",
+        map(col("score_type"), col("score_value"))
+      )
+      .drop("score_type", "score_value")
+      .groupBy("class_id", "student_id")
+      .agg(collect_list("score_map") as "score_map")
+
+    df.printSchema()
+
+    // Write to C* table
+    df.write
+      .cassandraFormat(cassTblName_lm, cassKSName)
+      .mode("append")
+      .save()
+  }
 
 
   // On-prem Mongo server (replica set) connection URL
@@ -51,56 +120,69 @@ object loadmongo extends App {
     .master(dseSparkMasterUrl)
     .config(mongoConf)
     .config(dseConf)
-    .getOrCreate();
+    .getOrCreate()
   import spark.implicits._
 
+  // Explicit Spark schema definition
   val scoreMapType = DataTypes.createMapType(StringType, StringType)
-  val gradesSchema = ( new StructType()
+  val gradesSchema = new StructType()
     .add("_id", StringType)
     .add("class_id", IntegerType)
     .add("student_id", IntegerType)
     .add("scores", ArrayType(scoreMapType))
-    )
 
   //val mongoDF = MongoSpark.load(spark)
   val mongoDF = spark.read
     .schema(gradesSchema)
     .format("com.mongodb.spark.sql.DefaultSource")
-    .option("database", "mytestdb")
-    .option("collection", "grades")
+    .option("database", mongoDBName)
+    .option("collection", mongoCollName)
     .load()
     .drop("_id")
-
   //--> Debug purpose
   //mongoDF.explain()
   //mongoDF.printSchema()
 
-  // Drop Mongo document "_id" column
-  var df = mongoDF.drop($"_id")
+  /**
+   * Transform and Write to C* using simple-flatten method
+   */
+  //SimpleFlattenWriteCass(mongoDF)
 
-  // Flatten "scores" arrary
-  df = df.select($"class_id", $"student_id", explode($"scores") as "score_types")
+  /**
+   * Transform and Write to C* using list-map method
+   */
+  // Create keyspace and table
+  /*
+  CassandraConnector(spark.sparkContext).withSessionDo { session =>
+    session.execute("""CREATE TABLE IF NOT EXISTS """ + cassKSName + "." + cassTblName_lm + """ (
+                      |    class_id int,
+                      |    student_id int,
+                      |    score_map list<frozen<map<text, float>>>,
+                      |    PRIMARY KEY ((class_id, student_id))
+                      |)""".stripMargin)
+  }
+  */
+  ListOfMapWriteCass(mongoDF)
 
-  // Get individual score type and value columns
-  df = df.select($"class_id", $"student_id", $"score_types.type" as "score_type", $"score_types.score" as "score_value")
-
-  // Convert score value to the right type
-  df = df.withColumn("score_value", col("score_value").cast("Float"))
-
-  df.printSchema()
-
-  // Create C* table
-  df.createCassandraTable(
-    "testks",
-    "grades_c",
-    partitionKeyColumns = Some(Seq("class_id"," student_id")),
-    clusteringKeyColumns = Some(Seq("score_type")))
-
-  // Write to C* table
-  df.write
-    .cassandraFormat("grades_c", "testks")
-    .mode("append")
-    .save()
-
+  spark.stop()
   System.exit(0)
 }
+
+
+
+/**
+ * Test direct client connection to MongoDB (not through Spark)
+ */
+/*  def TestRegMongoClient(): Unit = {
+    val mongoLogger = Logger.getLogger("org.mongodb.driver")
+    mongoLogger.setLevel(Level.WARNING)
+
+    val client: MongoClient = MongoClients.create(mongoURI)
+    val db: MongoDatabase = client.getDatabase(mongoDBName)
+    val collNames = db.listCollectionNames().iterator()
+
+    while (collNames.hasNext) {
+      System.out.println(collNames.next())
+    }
+  }*/
+//TestRegMongoClient()
