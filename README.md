@@ -210,7 +210,9 @@ This is invalid because in C* such a column type (collection within a collection
 
 One workaround here is to create proper C* schema in advance with the right CQL type (e.g. with "frozen" keyword) and the Spark program simply writes data in C* without the need to create the table first.
 
-# Write to C* with a Flatten Schema
+**NOTE** that there is a JIRA ticket opened to make frozen nested collections.
+
+# Write to C* with a Flattened Schema
 
 In C*, there are several different techniques to do data denormalization. Using collection is one way; but there are some minor caveats associated with it. Another probably better approach is through "clustering" keys, as exampled in the following C* schema:
 
@@ -276,3 +278,7 @@ cqlsh:testks> select * from grades2 limit 10;
        24 |          0 |       quiz | 28.63057857803885
        16 |         29 |       exam | 91.10262572056217
 ```
+
+---
+
+![#f03c15](https://via.placeholder.com/15/f03c15/000000?text=+) **NOTE**: In the above flattened C* schema, the primary key is the combination of "class_id", "student_id", and "score_type". This means that for each student within a class, there can only be one record per score type. If the original Mongo collection does have multiple score records under one record type for one student, the above C* schema and transformation will be problematic. 
