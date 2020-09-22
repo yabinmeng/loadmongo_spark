@@ -12,8 +12,6 @@ import org.apache.spark.sql.cassandra._
 import com.datastax.spark.connector._
 import com.datastax.spark.connector.cql.CassandraConnector
 
-import com.datastax.oss.driver.api.core.CqlSession
-
 object loadmongo extends App {
 
   val mongoDBName = "mytestdb"
@@ -152,16 +150,15 @@ object loadmongo extends App {
    * Transform and Write to C* using list-map method
    */
   // Create keyspace and table
-  /*
   CassandraConnector(spark.sparkContext).withSessionDo { session =>
-    session.execute("""CREATE TABLE IF NOT EXISTS """ + cassKSName + "." + cassTblName_lm + """ (
-                      |    class_id int,
-                      |    student_id int,
-                      |    score_map list<frozen<map<text, float>>>,
-                      |    PRIMARY KEY ((class_id, student_id))
-                      |)""".stripMargin)
+    session.execute(
+      "CREATE TABLE IF NOT EXISTS " + cassKSName + "." + cassTblName_lm + " ( " +
+        "class_id int, " +
+        "student_id int, " +
+        "score_map list<frozen<map<text, float>>>, " +
+        "PRIMARY KEY ((class_id, student_id)))"
+    )
   }
-  */
   ListOfMapWriteCass(mongoDF)
 
   spark.stop()

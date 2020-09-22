@@ -6,15 +6,17 @@ lazy val root = (project in file(".")).
     mainClass in Compile := Some("com.example.loadmongo")
   )
 
+resolvers += "DataStax Repo" at "https://repo.datastax.com/public-repos/"
+val dseVersion = "6.8.3"
+
 libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % "2.4.7" % "provided",
   "org.apache.spark" %% "spark-sql" % "2.4.7" % "provided",
 
-  "com.datastax.spark" %% "spark-cassandra-connector" % "2.5.1" % "provided",
+  "com.datastax.dse" % "dse-spark-dependencies" % dseVersion % "provided",
+  //"com.datastax.spark" %% "spark-cassandra-connector" % "2.5.1",
 
   "org.mongodb.spark" %% "mongo-spark-connector" % "2.4.2",
-  "org.mongodb.scala" %% "mongo-scala-driver" % "4.1.0",
-  "org.mongodb.scala" %% "mongo-scala-bson" % "4.1.0",
 
   "com.typesafe" % "config" % "1.4.0"
 )

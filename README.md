@@ -451,3 +451,16 @@ cqlsh:testks> select * from grades where class_id = 7 and student_id = 29;
 ----------+------------+---------------------------------------------------------------------------------------
         7 |         29 | [{'exam': 63.15698}, {'quiz': 30.41484}, {'homework': 9.3621}, {'homework': 4.48936}]
 ```
+
+# Execute the Program
+
+* Use the following command to build a Uber jar ("loadmongo-assembly-1.0.jar")
+```
+$ sbt clean assembly 
+```
+
+* Once the Uber jar file is created, copy it to some location on the Spark master node in the DSE cluster. 
+
+* Then run the following command to submit the Spark job (assuming the submitting client machine is remotely outside the DSE cluster).
+```
+$ dse spark-submit --master dse://<dse_node_ip>:9042 --deploy-mode cluster --class com.example.loadmongo <some_location>/loadmongo-assembly-1.0.jar
