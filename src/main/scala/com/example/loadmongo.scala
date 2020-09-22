@@ -99,11 +99,11 @@ object loadmongo extends App {
 
 
   // On-prem Mongo server (replica set) connection URL
-  val mongoURI =
-    "mongodb://10.101.35.51:27017,10.101.35.51:27018,10.101.35.51:27019/"
+  val mongoURI = 
+    "mongodb://<mongo_srv_ip>:27017,<mongo_srv_ip>:27018,<mongo_srv_ip>:27019/"
   System.setProperty("org.mongodb.async.type", "netty")
 
-  val dseSrvIp = "10.101.33.244"
+  val dseSrvIp = "<dse_srv_ip>"
   val dseSrvPort = "9042"
   val dseSparkMasterUrl = "dse://" +  dseSrvIp + ":" + dseSrvPort
 
