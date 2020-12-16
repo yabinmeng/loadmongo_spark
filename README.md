@@ -1,4 +1,15 @@
-# Overview
+- [1. Overview](#1-overview)
+  - [1.1. Load Sample Data Set into MongoDB](#11-load-sample-data-set-into-mongodb)
+- [2. Access MongoDB from DSE Spark Shell](#2-access-mongodb-from-dse-spark-shell)
+- [3. Implicitly Infer Schema for MongoDB Data Loading](#3-implicitly-infer-schema-for-mongodb-data-loading)
+  - [3.1. Challenges of Writing into C* using Spark Cassandra Connector](#31-challenges-of-writing-into-c-using-spark-cassandra-connector)
+- [4. Explicit Schema Specification for MongoDB Data Loading](#4-explicit-schema-specification-for-mongodb-data-loading)
+  - [4.1. Challenges of Writing into C* using Spark Cassandra Connector](#41-challenges-of-writing-into-c-using-spark-cassandra-connector)
+- [5. Write to C* with a Flattened Schema](#5-write-to-c-with-a-flattened-schema)
+- [6. Final Solution with Proper Data Transformation](#6-final-solution-with-proper-data-transformation)
+- [7. Execute the Program](#7-execute-the-program)
+
+# 1. Overview
 
 This repo demostrates how to use DSE Analytics (Spark) to load data from collections in a MongoDB cluster into a DSE cluster. 
 
@@ -11,7 +22,7 @@ The environment setup is as below:
 * sbt version: 1.3.13
 * Scala version: 2.11.12
 
-## Load Sample Data Set into MongoDB
+## 1.1. Load Sample Data Set into MongoDB
 
 In this repo, we're going to use a sample data set from the following website as the source data we're going to load from MongoDB into DSE/C*. 
 * https://github.com/ozlerhakan/mongodb-json-files
@@ -65,7 +76,7 @@ rs0:PRIMARY> db.grades.find().limit(1).pretty()
 
 **NOTE** that the documents in this collection have a homogeneous structures and therefore we can check the collection schema by querying one single document. For collections that have heterogeneous document structure, we can use specialized MongoDB schema analyzer tools like [MongoEye](https://github.com/mongoeye/mongoeye) or [Variety](https://github.com/variety/variety).   
 
-# Access MongoDB from DSE Spark Shell
+# 2. Access MongoDB from DSE Spark Shell
 
 Now we have the source data in MongoDB, let's verify the connection from the DSE Analytics (Spark) cluster to the MongoDB cluster. The easiest way to do so is through Spark shell. 
 
@@ -102,7 +113,7 @@ scala> mongoDF.show(1)
 only showing top 1 row
 ```
 
-# Implicitly Infer Schema for MongoDB Data Loading
+# 3. Implicitly Infer Schema for MongoDB Data Loading
 
 MongoDB is a schemaless database. This means that the documents in a collection may have different JSON structures (although they could also follow the same one). On the other side Spark DataFrames and DataSets do require a schema. 
 
@@ -126,7 +137,7 @@ root
 By the above inferred schema, the "**scores**" column is of the following type:
 * ArraryType(StructType)
 
-## Challenges of Writing into C* using Spark Cassandra Connector
+## 3.1. Challenges of Writing into C* using Spark Cassandra Connector
 
 Assuming in the target C* schema, we only want to keep columns "class_id", "student_id", and "scores", We can try to create a C* table from a DataFrame by utilizing Spark Cassandra Connector's features
 . But it fails with "IllegalArgumentException", as below:
@@ -141,7 +152,7 @@ java.lang.IllegalArgumentException: Unsupported type: StructType(StructField(oid
 
 The issue here is that Spark Cassandra Connector doesn't support Spark SQL **StructType**.
  
-# Explicit Schema Specification for MongoDB Data Loading
+# 4. Explicit Schema Specification for MongoDB Data Loading
 
 Looking at the original document structure, the natural column type for "scores" column would be a List/Arrary of Map items. Based on this understanding, let's explicitly specify the schema when loading the data from MongoDB. 
 
@@ -188,7 +199,7 @@ root
 Check the DataFrame schema and we now see that the "**scores**" column is of the following type:
 * ArraryType(Map(String, String))
 
-## Challenges of Writing into C* using Spark Cassandra Connector
+## 4.1. Challenges of Writing into C* using Spark Cassandra Connector
 
 **Map** type is supported in Spark Cassandra Connector, but writing the above DataFrame still triggers an issue, as below:
 
@@ -212,7 +223,7 @@ One workaround here is to create proper C* schema in advance with the right CQL 
 
 **NOTE** that there is a JIRA ticket opened to make frozen nested collections.
 
-# Write to C* with a Flattened Schema
+# 5. Write to C* with a Flattened Schema
 
 In C*, there are several different techniques to do data denormalization. Using collection is one way; but there are some minor caveats associated with it. Another probably better approach is through "clustering" keys, as exampled in the following C* schema:
 
@@ -283,7 +294,7 @@ cqlsh:testks> select * from grades2 limit 10;
 
 ![#f03c15](https://via.placeholder.com/15/f03c15/000000?text=+) **NOTE**: In the above flattened C* schema, the primary key is the combination of "class_id", "student_id", and "score_type". This means that for each student within a class, there can only be one record per score type. If the original Mongo collection does have multiple score records under one record type for one student, the above C* schema and transformation will be problematic. 
 
-# Final Solution with Proper Data Transformation
+# 6. Final Solution with Proper Data Transformation
 
 In the original MongoDB collection, the "**scores**" column is an **array** of maps with the following key/value part as an example:
 * *Map Item Key*: "type", or "score"
@@ -452,7 +463,7 @@ cqlsh:testks> select * from grades where class_id = 7 and student_id = 29;
         7 |         29 | [{'exam': 63.15698}, {'quiz': 30.41484}, {'homework': 9.3621}, {'homework': 4.48936}]
 ```
 
-# Execute the Program
+# 7. Execute the Program
 
 * Use the following command to build a Uber jar ("loadmongo-assembly-1.0.jar")
 ```
